@@ -209,6 +209,9 @@ class editor(object):
                     self._chars[0].append (c)
                 except:
                     self._chars[1].append (c)
+            elif (not self._py_mode and ( c in u'*')):
+                self._tabkey_list += self._parser (c)
+                self._chars[0].append (c)
             else:
                 self._chars[1].append (c)
         self._t_chars.append(c)

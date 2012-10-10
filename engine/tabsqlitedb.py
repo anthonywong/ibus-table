@@ -721,6 +721,104 @@ class tabsqlitedb:
             return x
         result = [add2box(x) for x in result if x[1:-2] not in box_uniq]
         return result[:]
+    
+    def select_words_wildcard_closed( self, tabkeys, onechar=False, bitmask=0 ):
+        '''
+        Get phrases from database by tab_key objects
+        ( which should be equal or less than the max key length)
+        This method is called in table.py by passing UserInput held data
+        Return result[:] 
+        '''
+
+        result = []
+        selectlen = 2
+        while selectlen <= 5:
+            # firstly, we make sure the len we used is equal or less than the max key length
+            _len = min( selectlen - 1,self._mlen )
+            _condition = ''
+            _condition += ''.join ( 'AND mlen = ? ' )
+            _condition += ''.join ( 'AND m0 = ? ' )
+            _condition += ''.join ( 'AND m%d = ? ' % _len )
+            if onechar:
+                # for some users really like to select only single characters
+                _condition += 'AND clen=1 '
+            if bitmask:
+                # now just the bits for chinese
+                all_ints = xrange(1,5)
+                need_ints = filter (lambda x: x & bitmask, all_ints)
+                bit_condition = 'OR'.join( map(lambda x: ' category = %d ' %x,\
+                        need_ints) )
+                _condition += 'AND (%s) ' % bit_condition
+
+            # you can increase the x in _len + x to include more result, but in the most case, we only need one more key result, so we don't need the extra overhead :)
+            # we start search for 1 key more, if nothing, then 2 key more and so on
+            # this is the max len we need to add into the select cause.
+            w_len = self._mlen - _len +1
+            # we start from 2, because it is < in the sqlite select, which need 1 more.
+            x_len = 2
+            while x_len <= w_len + 1:
+                sqlstr = '''SELECT * FROM (SELECT * FROM main.phrases WHERE mlen < %(mk)d  %(condition)s 
+                UNION ALL
+                SELECT * FROM user_db.phrases WHERE mlen < %(mk)d %(condition)s 
+                UNION ALL
+                SELECT * FROM mudb.phrases WHERE mlen < %(mk)d %(condition)s )
+                ORDER BY mlen ASC, user_freq DESC, freq DESC;''' % { 'mk':_len+x_len, 'condition':_condition}
+                # we have redefine the __int__(self) in class tabdict.tab_key to return the key id, so we can use map to got key id :)
+                _tabkeys = [selectlen, int(tabkeys[0]), int(tabkeys[len(tabkeys) - 1])]
+                _tabkeys += _tabkeys + _tabkeys
+                result = self.db.execute(sqlstr, _tabkeys).fetchall()
+                #self.db.commit()
+                # if we find word, we stop this while, 
+                if len(result) >0:
+                    break
+                x_len += 1
+            result += result_tmp
+            selectlen += 1
+        # here in order to get high speed, I use complicated map
+        # to subtitute for
+        sysdb={}
+        usrdb={}
+        mudb={}
+        _cand = []
+        #searchres = map ( lambda res: res[-2] and [ True, [(res[:-2],[res[:-1],res[-1:]])] ]\
+        #        or [ False, [(res[:-2] , [res[:-1],res[-1:]])] ] \
+        #        , result )
+        searchres = map ( lambda res: [ int(res[-2]), int(res[-1]), [(res[:-2],[res[:-1],res[-1:]])] ], result)
+        # for sysdb
+        reslist=filter( lambda x: not x[1], searchres )
+        map (lambda x: sysdb.update(x[2]), reslist)
+        # for usrdb
+        reslist=filter( lambda x: ( x[0] in [0,-1] ) and x[1], searchres )
+        map (lambda x: usrdb.update(x[2]), reslist)
+        # for mudb
+        reslist=filter( lambda x: ( x[0] not in [0,-1] ) and x[1], searchres )
+        map (lambda x: mudb.update(x[2]), reslist)
+
+        # first process mudb
+        searchres = map ( lambda key: mudb[key][0] + mudb[key][1], mudb )
+        #print searchres
+        map (_cand.append, searchres)
+
+        # now process usrdb and sysdb
+        searchres = map ( lambda key:  (not mudb.has_key(key))  and usrdb[key][0] + usrdb[key][1]\
+                or None , usrdb )
+        searchres = filter(lambda x: bool(x), searchres )
+        #print searchres
+        map (_cand.append, searchres)
+        searchres = map ( lambda key: ((not mudb.has_key(key)) and (not usrdb.has_key(key)) )and sysdb[key][0] + sysdb[key][1]\
+                or None, sysdb )
+        searchres = filter (lambda x: bool(x), searchres)
+        map (_cand.append, searchres)
+        #for key in usrdb:
+        #    if not sysdb.has_key (key):
+        #        _cand.append( usrdb[key][0] + usrdb[key][1] )
+        #    else:
+        #        _cand.append( sysdb[key][0] + usrdb[key][1] )
+        #for key in sysdb:
+        #    if not usrdb.has_key (key):
+        #        _cand.append( sysdb[key][0] + sysdb[key][1] )
+        _cand.sort(cmp=self.compare)
+        return _cand[:]
 
     def select_zi( self, tabkeys ):
         '''
